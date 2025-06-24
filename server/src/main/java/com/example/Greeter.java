@@ -26,10 +26,11 @@ public class Greeter {
    // do no thing yet !
    }
 
+  public void doSomeThing4() {
+   // do no thing yet !
+   }
    /**
- * @param someone name of a person
- * @return greeting string
- */
+
   public final String greet(final String someone) {
    return String.format("Hello World again, %s!", someone);
    

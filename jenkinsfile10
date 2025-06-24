@@ -37,7 +37,11 @@ pipeline {
         }
         stage('Qualimetry Analysis') {
             steps {
-                echo 'Quality Analysis'
+                echo 'Quality Analysis with SonarQube'
+                withSonarQubeEnv(installationName: 'sonarServer', credentialsId:'cred4sonar') {
+                 sh "mvn clean package sonar:sonar"
+       }
+
             }
         }
         stage('Deploy') {

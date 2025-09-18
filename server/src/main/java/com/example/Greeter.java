@@ -1,6 +1,6 @@
 package com.example;
 
-import java.lang.Math;
+// import java.lang.Math;
 /**
 * this is a defaut Class constructor
 */
@@ -14,10 +14,11 @@ public class Greeter {
   public Greeter() {
    // contructeur par défaut
   }
-
+/*
  public void doSomeThing() {
    // do no thing yet !
    }
+   
   public void doSomeThing2() {
    // do no thing yet !
    }
@@ -29,6 +30,8 @@ public class Greeter {
   public void doSomeThing4() {
    // do no thing yet !
    }
+   */
+  
    /**
  * @param someone name of a person
  * @return greeting string

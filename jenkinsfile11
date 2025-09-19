@@ -1,0 +1,44 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Clone codebase') {
+            steps {
+                echo 'Clone codebase from github'
+                git (url : 'https://github.com/tahararib/maven-project.git', 
+                branch: 'master', credentialsId: 'cred4github')
+            }
+        }
+      stage('Compile & Test') {
+            steps {
+                echo 'Compiling and Testing'
+                withMaven(maven : 'localMAVEN') {
+                sh 'mvn clean test'
+                }
+            }
+        }
+        
+    stage('Build') {
+            steps {
+                echo 'Building project'
+                withMaven(maven : 'localMAVEN') {
+                sh 'mvn -B -DskipTests clean package'
+                }
+            }
+        }
+     
+     stage('SonarQube Analysis') {
+            steps {
+                echo 'Qualimetry Analysis with SinarQube'
+                withSonarQubeEnv(installationName : 'sonarServer' , credentialsId: 'cred4sonar') {
+                sh 'mvn sonar:sonar'
+                }
+            }
+        }   
+    stage('Archive & Deploy') {
+            steps {
+                echo 'Archinving Artefact and Deploying App'
+            }
+        }
+    }
+}

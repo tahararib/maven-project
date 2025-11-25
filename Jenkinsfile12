@@ -1,0 +1,70 @@
+pipeline {
+    agent {
+        label {label 'jdk17'}
+    }
+    stages {
+        stage('Clone Code base') {
+            steps {
+                echo 'Cloning from github'
+                git (url:'https://github.com/tahararib/maven-project.git',
+                branch:'master', credentialsId:'cred4github')
+            }
+        }
+        stage('Compile & testing')  {
+            steps {
+                echo 'Compiling & Unit Testing'
+                withMaven(maven: 'localMAVEN') {
+                    sh 'mvn clean test'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                echo 'Create Package Application'
+                withMaven(maven: 'localMAVEN') {
+                    sh 'mvn clean -B -DskipTests package'
+                }
+            }
+        }
+        
+        stage('Code Source Qualimetry Analysis') {
+            steps {
+                echo 'Code Source Qualimetry Analysis wirh Warnings & Co.'
+                //lancer l'analyse de Warnings via Maven
+                sh 'mvn checkstyle:checkstyle'
+                //Générer le rapport de couverture avec Cobertura
+                sh 'mvn cobertura:cobertura'
+            }
+            post {
+                always {
+                    //Publier les rapports de couverture
+                    cobertura autoUpdateHealth: false, autoUpdateStability: false, 
+                    coberturaReportFile: 'target/site/cobertura/coverage.xml', failNoReports: false, 
+                    maxNumberOfBuilds: 0, sourceEncoding: 'UTF_8', zoomCoverageChart: false
+                    
+                    //Publier le rapport Warnings
+                    recordIssues tools: [checkStyle(pattern: 'target/checkstyle-result.xml')], 
+                    enabledForFailure: true
+                }
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {echo 'Qualimetry Analysis by SonarQube'
+            withSonarQubeEnv(installationName: 'serverSonar', credentialsId: 'cred4sonar') {
+                sh 'mvn sonar:sonar'
+            }
+            }
+        }
+        
+        stage('Archive in .M2 & Deploy on Staging ') {
+            steps{
+                echo 'Archiving on Nexus /Artifactory/.M2'
+                withMaven(maven: 'localMAVEN') {
+                    sh 'mvn clean -B -DskipTests package install'
+                }
+                echo 'Deploying on Staging'
+            }
+        }
+    }
+}

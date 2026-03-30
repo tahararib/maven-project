@@ -337,13 +337,21 @@
         <scope>provided</scope>
       </dependency>
 
-      <!-- FIX: junit-dep 4.10 → 4.13.2 (correctifs sécurité, dernière 4.x stable)
-           IMPORTANT: l'artifactId junit-dep est conservé tel quel car les POMs
-           enfants (server, webapp) le référencent sans version — changer l'artifactId
-           ici casserait leur résolution de dépendance. -->
+      <!-- FIX: junit-dep ne dépasse pas la version 4.10 sur Maven Central.
+           Deux entrées coexistent dans dependencyManagement :
+           1) junit-dep:4.10   → pour les modules enfants qui le référencent encore (sans rupture)
+           2) junit:4.13.2     → cible de migration ; mettre à jour les modules enfants
+                                  pour pointer vers cet artifactId -->
       <dependency>
         <groupId>junit</groupId>
         <artifactId>junit-dep</artifactId>
+        <version>4.10</version>
+        <scope>test</scope>
+      </dependency>
+
+      <dependency>
+        <groupId>junit</groupId>
+        <artifactId>junit</artifactId>
         <version>4.13.2</version>
         <scope>test</scope>
       </dependency>

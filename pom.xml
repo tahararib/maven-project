@@ -236,16 +236,23 @@
           <version>3.0.0</version>
         </plugin>
 
-        <!-- FIX: org.mortbay.jetty → org.eclipse.jetty (groupId obsolète)
-             8.0.0.M1 est EOL depuis 2012.
-             IMPORTANT pour le lab : choisir la version selon le packaging :
-               - jakarta.ee (Java EE 10) → Jetty 12.x
-               - javax (Java EE 8)       → Jetty 10.x ou 11.x
-             Ici Java 11 + servlet 2.5 (javax) → Jetty 10.x -->
+        <!-- FIX: org.eclipse.jetty — nouveau groupId officiel depuis 2009
+             Version 10.0.20 : compatible javax.servlet (cohérent avec servlet-api 2.5 du lab) -->
         <plugin>
           <groupId>org.eclipse.jetty</groupId>
           <artifactId>jetty-maven-plugin</artifactId>
           <version>10.0.20</version>
+        </plugin>
+
+        <!-- COMPATIBILITÉ MODULES ENFANTS: l'ancien groupId org.mortbay.jetty est
+             conservé dans pluginManagement pour éviter le WARNING de version manquante
+             dans les modules qui le référencent encore.
+             NOTE pédagogique : la migration complète consiste à mettre à jour
+             le groupId dans chaque module enfant vers org.eclipse.jetty. -->
+        <plugin>
+          <groupId>org.mortbay.jetty</groupId>
+          <artifactId>jetty-maven-plugin</artifactId>
+          <version>8.1.22.v20160922</version>
         </plugin>
 
       </plugins>
@@ -330,20 +337,32 @@
         <scope>provided</scope>
       </dependency>
 
-      <!-- FIX: junit-dep 4.10 → junit 4.13.2 (dernière version 4.x avec correctifs sécurité)
-           junit-dep séparait junit du hamcrest ; ce n'est plus nécessaire avec junit 4.13+ -->
+      <!-- FIX: junit-dep 4.10 → 4.13.2 (correctifs sécurité, dernière 4.x stable)
+           IMPORTANT: l'artifactId junit-dep est conservé tel quel car les POMs
+           enfants (server, webapp) le référencent sans version — changer l'artifactId
+           ici casserait leur résolution de dépendance. -->
       <dependency>
         <groupId>junit</groupId>
-        <artifactId>junit</artifactId>
+        <artifactId>junit-dep</artifactId>
         <version>4.13.2</version>
         <scope>test</scope>
       </dependency>
 
-      <!-- FIX: hamcrest-core + hamcrest-library 1.2.1 → 2.2
-           hamcrest 2.x fusionne les deux artéfacts en un seul -->
+      <!-- FIX: hamcrest 1.2.1 → 2.2
+           Les artifactIds hamcrest-core et hamcrest-library sont conservés pour
+           la même raison : compatibilité avec les références des modules enfants.
+           En hamcrest 2.x, hamcrest-core et hamcrest-library sont des wrappers
+           qui dépendent de l'artéfact fusionné org.hamcrest:hamcrest. -->
       <dependency>
         <groupId>org.hamcrest</groupId>
-        <artifactId>hamcrest</artifactId>
+        <artifactId>hamcrest-core</artifactId>
+        <version>2.2</version>
+        <scope>test</scope>
+      </dependency>
+
+      <dependency>
+        <groupId>org.hamcrest</groupId>
+        <artifactId>hamcrest-library</artifactId>
         <version>2.2</version>
         <scope>test</scope>
       </dependency>

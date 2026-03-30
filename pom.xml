@@ -129,7 +129,49 @@
       <plugin>
         <artifactId>maven-site-plugin</artifactId>
       </plugin>
+<!-- CHECKSTYLE : génère checkstyle-result.xml à la phase verify -->
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-checkstyle-plugin</artifactId>
+  <executions>
+    <execution>
+      <id>checkstyle-verify</id>
+      <phase>verify</phase>
+      <goals>
+        <goal>checkstyle</goal>
+      </goals>
+      <configuration>
+        <outputFileFormat>xml</outputFileFormat>
+        <consoleOutput>false</consoleOutput>
+        <failsOnError>false</failsOnError>
+        <!-- Règles par défaut Sun/Google, ou pointer vers un fichier custom -->
+        <!-- <configLocation>google_checks.xml</configLocation> -->
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
 
+<!-- PMD + CPD : génère pmd.xml et cpd.xml -->
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-pmd-plugin</artifactId>
+  <executions>
+    <execution>
+      <id>pmd-verify</id>
+      <phase>verify</phase>
+      <goals>
+        <goal>pmd</goal>   <!-- analyse statique PMD -->
+        <goal>cpd</goal>   <!-- détection de code dupliqué -->
+      </goals>
+      <configuration>
+        <outputFormat>xml</outputFormat>
+        <failOnViolation>false</failOnViolation>
+        <printFailingErrors>true</printFailingErrors>
+      </configuration>
+    </execution>
+  </executions>
+</plugin>
+             
     </plugins>
 
     <pluginManagement>

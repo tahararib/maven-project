@@ -1,0 +1,112 @@
+pipeline {
+    agent {
+        label { label 'jdk21' }
+    }
+    
+    parameters {
+        //Boulean : skip tests
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: 'Cocher pour sauter les tests (plus rapide et évite de les repassere)'
+            )
+        //Choix : envir
+        choice(
+            name: 'ENV_TARGET',
+            choices: ['dev', 'staging', 'prod'],
+            description: 'Envir de deploiement'
+            )    
+        // String : version
+        string(
+            name: 'APP_VERSION',
+            defaultValue: '1.0-SNASHPT' ,
+            description: 'Version Maven à Builder'
+            )
+    }
+
+    stages {
+        stage('Info') {
+            steps {
+                echo "Skip tests  : ${params.SKIP_TESTS}"
+                echo "Environnement: ${params.ENV_TARGET}"
+            }
+        }
+        stage('Clone codebase') {
+            steps {
+                echo 'cloning from github'
+                git (url:'https://github.com/tahararib/maven-project.git',
+                    branch: 'master', credentialsId:'cred4github')
+            }
+        }
+        stage('Compile & UnitTests') {
+            steps {
+                echo 'Compiling & Unit Testing'
+                withMaven(maven: 'localMAVEN') {
+                    sh "mvn test"
+                }
+            }
+        }
+     stage('Build')  {
+         steps {
+             echo "Building or packaging"
+             withMaven(maven: 'localMAVEN') {
+                sh """
+                    mvn clean verify \
+                    -DskipTests=${params.SKIP_TESTS} \
+                    -P${params.ENV_TARGET}
+                    """
+                }
+         }
+     }
+     
+     stage('Quality Gates') {
+         // Sauter les QG si Skip TEsts 
+         //(pas de rapport Jacoco ni Surefire)
+         when {
+             expression { return !params.SKIP_TESTS }
+         }
+         steps {
+             jacoco execPattern: '**/jacoco.exec'
+             recordIssues tools: [spotBugs(pattern: '**/spotbugsXML.xml')]
+         }
+     }
+     
+     stage('SonarQube Analysis') {
+         steps {
+            echo 'Qualimetry Analysis by SonarQube ...'
+            withSonarQubeEnv(installationName: 'sonarServer', credentialsId: 'cred4sonar')
+            {
+                sh 'mvn sonar:sonar'
+            }
+         }
+            
+     }
+     
+     stage("Deploy") {
+         // Bloquer le deploiement en prod si les tests ont été skippées
+         when {
+             expression { 
+                 if (params.ENV_TARGET =='prod' && params.SKIP_TESTS) {
+                     error "Déploiement PROD interdit avec SKIP_TEST=true"
+                 }
+                 return true
+             }
+         }
+         steps {
+             echo "Deploying on ${params.ENV_TARGET} ..."
+         }
+     }
+    }
+    post {
+        always {
+            //afficher avec avertissement visible si tests skippés
+            script {
+                if (params.SKIP_TESTS) {
+                    currentBuild.description = "+ Tests skippés - ${params.ENV_TARGET}"
+                } else {
+                    currentBuild.description = "${params.ENV_TARGET} - v${params.APP_VERSION}"
+                }
+            }
+        }
+    }
+}

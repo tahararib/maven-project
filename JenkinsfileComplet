@@ -1,0 +1,304 @@
+// ============================================================
+//  PIPELINE DÉCLARATIF — SonarQube + Quality Gate + Sonargraph
+// — Formation Jenkins
+// ============================================================
+
+pipeline {
+
+    agent any
+
+    tools {
+        maven 'Maven-3.9'
+        jdk   'JDK-21'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    triggers {
+        githubPush()
+        cron('H 8,10,12,14,16,18 * * 1-5')
+    }
+
+    parameters {
+        booleanParam(
+            name        : 'SKIP_TESTS',
+            defaultValue: false,
+            description : 'Sauter les tests (désactive aussi l\'analyse Sonar)'
+        )
+        booleanParam(
+            name        : 'SKIP_SONAR',
+            defaultValue: false,
+            description : 'Sauter l\'analyse SonarQube (build rapide)'
+        )
+        choice(
+            name        : 'SONAR_BRANCH',
+            choices     : ['master', 'develop', 'feature'],
+            description : 'Branche SonarQube à analyser'
+        )
+    }
+
+    environment {
+        SONAR_SERVER    = 'sonarServer'   // nom dans Manage Jenkins > System
+        SONAR_PROJECT   = 'maven-project'
+        SONAR_HOST_URL  = 'http://192.168.56.12:9000'
+        MAVEN_OPTS      = '-Xmx1024m'
+    }
+
+    stages {
+
+        // ============================================================
+        stage('Checkout') {
+        // ============================================================
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git log -1 --format="%h"',
+                        returnStdout: true
+                    ).trim()
+                    env.GIT_COMMIT_MSG = sh(
+                        script: 'git log -1 --format="%s"',
+                        returnStdout: true
+                    ).trim()
+                    currentBuild.description = "${env.GIT_COMMIT_SHORT} — ${env.GIT_COMMIT_MSG}"
+                }
+            }
+        }
+
+        // ============================================================
+        stage('Build & Tests') {
+        // ============================================================
+        // Phase verify : compile + test + spotbugs + checkstyle + pmd + jacoco
+        // -Dmaven.test.failure.ignore=true : continuer même si tests échouent
+        // pour que les rapports soient générés avant l'analyse Sonar
+        // ============================================================
+            steps {
+                sh '''
+                    mvn clean verify \
+                      -Dmaven.test.failure.ignore=true \
+                      -DskipTests=${SKIP_TESTS}
+                '''
+            }
+            post {
+                always {
+                    // Résultats JUnit
+                    junit(
+                        testResults      : '**/surefire-reports/*.xml',
+                        allowEmptyResults: true
+                    )
+                    // Couverture JaCoCo avec quality gate local
+                    script {
+                        if (!params.SKIP_TESTS) {
+                            jacoco(
+                                execPattern          : '**/jacoco.exec',
+                                classPattern         : '**/classes',
+                                sourcePattern        : '**/src/main/java',
+                                exclusionPattern     : '**/*Test*.class',
+                                minimumLineCoverage  : '50',
+                                minimumBranchCoverage: '40',
+                                deltaLineCoverage    : '-5'
+                            )
+                        }
+                    }
+                    // Warnings NG : Checkstyle + PMD + SpotBugs
+                    recordIssues(
+                        enabledForFailure: true,
+                        tools: [
+                            checkStyle(pattern: '**/checkstyle-result.xml'),
+                            pmdParser(pattern:  '**/pmd.xml'),
+                            spotBugs(pattern:   '**/spotbugsXml.xml',
+                                     useRankAsPriority: true)
+                        ],
+                        qualityGates: [
+                            [threshold: 0,  type: 'TOTAL_ERROR', unstable: false],
+                            [threshold: 10, type: 'TOTAL_HIGH',  unstable: true ],
+                            [threshold: 0,  type: 'NEW',         unstable: false]
+                        ]
+                    )
+                }
+            }
+        }
+
+        // ============================================================
+        stage('SonarQube Analysis') {
+        // ============================================================
+        // withSonarQubeEnv() injecte automatiquement :
+        //   SONAR_HOST_URL, SONAR_AUTH_TOKEN, SONAR_CONFIG_NAME
+        // La commande mvn sonar:sonar les lit depuis l'environnement.
+        // Ne pas mettre le token en clair dans le Jenkinsfile.
+        // ============================================================
+            when {
+                allOf {
+                    expression { return !params.SKIP_SONAR }
+                    expression { return !params.SKIP_TESTS }
+                }
+            }
+            steps {
+                withSonarQubeEnv("${env.SONAR_SERVER}") {
+                    sh """
+                        mvn sonar:sonar \
+                          -Dsonar.projectKey=${env.SONAR_PROJECT} \
+                          -Dsonar.projectName="${env.SONAR_PROJECT}" \
+                          -Dsonar.projectVersion=${env.BUILD_NUMBER} \
+                          -Dsonar.java.source=11 \
+                          -Dsonar.java.target=11 \
+                          -Dsonar.branch.name=${params.SONAR_BRANCH} \
+                          -Dsonar.coverage.jacoco.xmlReportPaths=**/jacoco.xml \
+                          -Dsonar.junit.reportPaths=**/surefire-reports \
+                          -Dsonar.exclusions=**/dto/**,**/model/**,**/*Test* \
+                          -Dsonar.cpd.exclusions=**/dto/**
+                    """
+                }
+                // Après withSonarQubeEnv(), SonarQube reçoit les données et
+                // lance son analyse côté serveur (asynchrone).
+                // L'étape suivante attend le résultat via webhook.
+            }
+        }
+
+        // ============================================================
+        stage('SonarQube Quality Gate') {
+        // ============================================================
+        // waitForQualityGate() met le pipeline en PAUSE et attend
+        // que SonarQube envoie le résultat via webhook.
+        //
+        // Prérequis : webhook configuré dans SonarQube :
+        //   Administration → Webhooks → URL: http://JENKINS:8080/sonarqube-webhook/
+        //
+        // Sans webhook : timeout au bout de N minutes → ABORTED
+        // Avec abortPipeline: false → le pipeline continue même si QG échoue
+        // ============================================================
+            when {
+                allOf {
+                    expression { return !params.SKIP_SONAR }
+                    expression { return !params.SKIP_TESTS }
+                }
+            }
+            steps {
+                script {
+                    // Timeout de sécurité : si SonarQube ne répond pas
+                    // dans les 10 minutes, le pipeline est abandonné
+                    timeout(time: 10, unit: 'MINUTES') {
+
+                        def qg = waitForQualityGate(
+                            // abortPipeline: true  = FAILURE si QG échoue (défaut)
+                            // abortPipeline: false = continuer même si QG échoue
+                            abortPipeline: true
+                        )
+
+                        echo "SonarQube Quality Gate status : ${qg.status}"
+
+                        // Statuts possibles :
+                        //   OK      → Quality Gate passé
+                        //   WARN    → Avertissements (QG avec conditions WARNING)
+                        //   ERROR   → Quality Gate échoué (conditions ERROR non respectées)
+                        //   NONE    → Pas de Quality Gate configuré
+                        //   UNKNOWN → Analyse en cours ou erreur
+
+                        switch(qg.status) {
+                            case 'OK':
+                                echo "Quality Gate OK — code en bonne sante"
+                                currentBuild.description += " | QG: OK"
+                                break
+                            case 'WARN':
+                                currentBuild.result = 'UNSTABLE'
+                                currentBuild.description += " | QG: WARN"
+                                echo "Quality Gate WARN — verifier les metriques dans Sonar"
+                                break
+                            case 'ERROR':
+                                currentBuild.description += " | QG: FAIL"
+                                error "Quality Gate FAILURE — le code ne respecte pas les standards"
+                                break
+                            default:
+                                currentBuild.result = 'UNSTABLE'
+                                echo "Quality Gate statut inconnu : ${qg.status}"
+                        }
+                    }
+                }
+            }
+            post {
+                always {
+                    // Lien direct vers le dashboard SonarQube dans la description
+                    script {
+                        def sonarUrl = "${env.SONAR_HOST_URL}/dashboard?id=${env.SONAR_PROJECT}"
+                        echo "Dashboard SonarQube : ${sonarUrl}"
+                        // Ajouter le lien dans les infos du build
+                        if (manager.logContains('.*ANALYSIS SUCCESSFUL.*')) {
+                            currentBuild.description += " | <a href='${sonarUrl}'>Sonar</a>"
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        stage('Sonargraph Analysis') {
+        // ============================================================
+        // ATTENTION : Sonargraph est un produit SÉPARÉ de SonarQube.
+        // Éditeur : hello2morrow (https://www.hello2morrow.com)
+        // Ce stage nécessite :
+        //   1. Sonargraph installé sur le serveur Jenkins ou accessible
+        //   2. Licence Sonargraph valide
+        //   3. Plugin "Sonargraph Integration" installé dans Jenkins
+        //   4. Un fichier de configuration .sonargraph dans le projet
+        //
+        // Ce que Sonargraph analyse (différent de SonarQube) :
+        //   - Architecture en couches (layers, subsystems)
+        //   - Dépendances cycliques entre packages/modules
+        //   - Violations des règles d'architecture définies
+        //   - Métriques structurelles : ACD, NCCD, couplage, cohésion
+        //   - Tendances d'évolution de la qualité architecturale
+        //
+        // Désactivé par défaut dans ce lab (licence nécessaire)
+        // ============================================================
+            when {
+                // Activer uniquement si Sonargraph est installé et licencié
+                expression { return false }
+            }
+            steps {
+                script {
+                    // Utilisation via le plugin Sonargraph Integration :
+                    sonargraphBuild(
+                        installationName    : 'Sonargraph-Explorer',  // configuré dans Manage Jenkins > Tools
+                        systemFile          : 'src/sonargraph/system.sonargraph',
+                        reportPath          : 'sonargraph-report',
+                        reportFileName      : 'sonargraph-report',
+                        logLevel            : 'info',
+                        qualityGate         : true,
+                        qualityGateFile     : 'src/sonargraph/quality-gate.xml'
+                    )
+                }
+            }
+            post {
+                always {
+                    // Publier le rapport Sonargraph dans Jenkins
+                    sonargraphReport(
+                        reportPath    : 'sonargraph-report',
+                        reportFileName: 'sonargraph-report'
+                    )
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts(
+                artifacts        : '**/target/*.war,**/target/*.jar',
+                allowEmptyArchive: true
+            )
+        }
+        success {
+            echo "Build OK — SonarQube: ${env.SONAR_HOST_URL}/dashboard?id=${env.SONAR_PROJECT}"
+        }
+        failure {
+            echo "Build FAILURE — verifier Quality Gate SonarQube et les logs"
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}

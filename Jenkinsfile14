@@ -1,0 +1,108 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Clone Codebase') {
+            steps {
+                echo 'Cloning from github'
+                git (url:'https://github.com/tahararib/maven-project.git' , branch:'master',
+                credentialsId: 'cred4github')
+            }
+        }
+        stage('Compile & UnitTests') {
+            steps {
+                echo 'Compiling & Unit Testing'
+                withMaven(maven:'localMAVEN') {
+                    sh 'mvn clean test'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                echo 'CBuilding or Packaging'
+                 withMaven(maven:'localMAVEN') {
+                    sh 'mvn clean -B -DskipTests package'
+                    //commentaire
+                }
+            }
+        }
+        stage('Qualimetry Analysis by SonarQube') {
+            steps {
+                echo 'Qualimetry Analysis by SOnarQube'
+                withSonarQubeEnv(installationName: 'sonarServer' , credentialsId: 'cred4sonar') {
+                    sh """ 
+                        mvn sonar:sonar \
+                          -Dsonar.projectKey=maven-project \
+                          -Dsonar.projectName="Maven-Project-Pipeline-Analysis" \
+                          -Dsonar.projectVersion=1.0-SNAPSHOT \
+                          -Dsonar.java.source=11 \
+                          -U
+                       """
+                }
+            }
+        } 
+    
+    stage('Code Source Qualimetry Analysis by Plugins') {
+    steps {
+        echo 'Code Source Qualimetry Analysis with Warnings & JaCoCo'
+
+        // Checkstyle — inchangé
+        sh 'mvn checkstyle:checkstyle'
+
+        // FIX : cobertura:cobertura → jacoco:report
+        // JaCoCo nécessite que les tests aient été exécutés au préalable
+        // avec l'agent jacoco actif (prepare-agent dans pom.xml)
+        // Si les tests ne sont pas encore lancés dans un stage précédent :
+        sh 'mvn test jacoco:report'
+
+        // Si les tests sont déjà lancés dans un stage précédent :
+        // sh 'mvn jacoco:report'
+    }
+    post {
+        always {
+            // FIX : cobertura() → jacoco() DSL natif
+            jacoco(
+                execPattern    : '**/target/jacoco.exec',
+                classPattern   : '**/target/classes',
+                sourcePattern  : '**/src/main/java',
+                exclusionPattern: '**/src/test/**'
+            )
+
+            // Warnings NG — inchangé
+            recordIssues(
+                tools: [checkStyle(pattern: '**/target/checkstyle-result.xml')],
+                enabledForFailure: true
+            )
+        }
+    }
+}
+       stage('Deploy to tomcat') {
+            steps {
+                echo 'Deploying in Staging/Prod Envir.'
+                // ─── Option 1 : Copy Artifact depuis un autre job ──────────
+                // Copier le WAR produit par un job "Build" séparé
+                copyArtifacts(
+                    projectName: 'first-pipeline-dec',   // job source
+                    selector   : lastSuccessful(),         // dernier build OK
+                    filter     : '**/*.war',               // pattern du fichier
+                    target     : 'deploy/',                // dossier destination
+                    flatten    : true                      // pas de sous-dossiers
+                )
+                // ─── Option 2 : Deploy to Container ────────────────────────
+            // Déploie directement sur Tomcat via son API Manager
+                    deploy(
+                        adapters: [
+                            tomcat9(
+                                url          : 'http://192.168.56.13:8080',
+                                credentialsId: 'cred4tomcat'
+                            )
+                            // tomcat8() pour Tomcat 8.x
+                            // tomcat9() pour Tomcat 9.x et 10.x
+                        ],
+                        //contextPath: '/',   
+                        war        : '**/*.war'
+                    )
+            }
+        } 
+    }
+}
